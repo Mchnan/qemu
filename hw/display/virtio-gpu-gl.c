@@ -241,4 +241,9 @@ static void virtio_register_types(void)
 type_init(virtio_register_types)
 
 module_dep("hw-display-virtio-gpu");
+#ifdef CONFIG_OPENGL
+/* only needed for the GL display integration; the venus-only build has no
+ * ui-opengl module on hosts without epoxy EGL, and a missing dep aborts
+ * module loading in util/module.c */
 module_dep("ui-opengl");
+#endif
