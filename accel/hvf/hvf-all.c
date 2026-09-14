@@ -108,6 +108,18 @@ static void hvf_set_phys_mem(MemoryRegionSection *section, bool add)
     }
 
     if (!add) {
+        if (!QEMU_IS_ALIGNED(size, page_size) ||
+            !QEMU_IS_ALIGNED(gpa, page_size)) {
+            /* hv_vm_unmap rejects unaligned ranges just like hv_vm_map, so
+             * asserting here would kill the VM (seen with virtio-gpu blob
+             * subregions at guest-4K offsets on 16K-page darwin hosts).
+             * Skip instead: for an added-but-unmappable section the stale
+             * mapping of the surrounding RAM stays active; for a removal a
+             * warning is the least wrong recovery available. */
+            warn_report("hvf: skip unaligned memory section gpa=0x%" HWADDR_PRIx
+                        " size=0x%" HWADDR_PRIx, gpa, size);
+            return;
+        }
         trace_hvf_vm_unmap(gpa, size);
         ret = hv_vm_unmap(gpa, size);
         assert_hvf_ok(ret);
