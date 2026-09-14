@@ -982,19 +982,26 @@ void dpy_cursor_define(QemuConsole *c, QEMUCursor *cursor)
 QEMUGLContext dpy_gl_ctx_create(QemuConsole *con,
                                 struct QEMUGLParams *qparams)
 {
-    assert(con->gl);
+    /* darwin experiment: headless venus-only has no GL display context */
+    if (!con->gl) {
+        return NULL;
+    }
     return con->gl->ops->dpy_gl_ctx_create(con->gl, qparams);
 }
 
 void dpy_gl_ctx_destroy(QemuConsole *con, QEMUGLContext ctx)
 {
-    assert(con->gl);
+    if (!con->gl) {
+        return;
+    }
     con->gl->ops->dpy_gl_ctx_destroy(con->gl, ctx);
 }
 
 int dpy_gl_ctx_make_current(QemuConsole *con, QEMUGLContext ctx)
 {
-    assert(con->gl);
+    if (!con->gl) {
+        return 0;
+    }
     return con->gl->ops->dpy_gl_ctx_make_current(con->gl, ctx);
 }
 
@@ -1120,7 +1127,10 @@ void dpy_gl_update(QemuConsole *con,
     DisplayState *s = con->ds;
     DisplayChangeListener *dcl;
 
-    assert(con->gl);
+    /* darwin experiment: headless venus-only drops GL scanout updates */
+    if (!con->gl) {
+        return;
+    }
 
     graphic_hw_gl_block(con, true);
     QLIST_FOREACH(dcl, &s->listeners, next) {

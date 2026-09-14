@@ -20,7 +20,9 @@
 #include "hw/virtio/virtio-gpu-bswap.h"
 #include "hw/virtio/virtio-gpu-pixman.h"
 
+#ifdef CONFIG_OPENGL
 #include "ui/egl-helpers.h"
+#endif
 
 #include <virglrenderer.h>
 
@@ -64,11 +66,13 @@ virtio_gpu_virgl_find_resource(VirtIOGPU *g, uint32_t resource_id)
 }
 
 #if VIRGL_RENDERER_CALLBACKS_VERSION >= 4
+#ifdef CONFIG_OPENGL
 static void *
 virgl_get_egl_display(G_GNUC_UNUSED void *cookie)
 {
     return qemu_egl_display;
 }
+#endif
 #endif
 
 #if VIRGL_VERSION_MAJOR >= 1
@@ -1442,26 +1446,38 @@ static int virtio_gpu_virgl_init(VirtIOGPU *g)
     VirtIOGPUGL *gl = VIRTIO_GPU_GL(g);
 
 #if VIRGL_RENDERER_CALLBACKS_VERSION >= 4
+#ifdef CONFIG_OPENGL
     if (qemu_egl_display) {
         virtio_gpu_3d_cbs.version = 4;
         virtio_gpu_3d_cbs.get_egl_display = virgl_get_egl_display;
-#if VIRGL_CHECK_VERSION(1, 1, 2)
-        virtio_gpu_3d_cbs.write_fence         = virgl_write_async_fence;
-        virtio_gpu_3d_cbs.write_context_fence = virgl_write_async_context_fence;
-        flags |= VIRGL_RENDERER_ASYNC_FENCE_CB;
-        flags |= VIRGL_RENDERER_THREAD_SYNC;
-#endif
     }
 #endif
+    /*
+     * Async-fence callbacks and THREAD_SYNC are required by the Venus render
+     * server path and do not depend on an EGL display.
+     */
+#if VIRGL_CHECK_VERSION(1, 1, 2)
+    virtio_gpu_3d_cbs.version = 4;
+    virtio_gpu_3d_cbs.write_fence         = virgl_write_async_fence;
+    virtio_gpu_3d_cbs.write_context_fence = virgl_write_async_context_fence;
+    flags |= VIRGL_RENDERER_ASYNC_FENCE_CB;
+    flags |= VIRGL_RENDERER_THREAD_SYNC;
+#endif
+#endif
+#ifdef CONFIG_OPENGL
 #ifdef VIRGL_RENDERER_D3D11_SHARE_TEXTURE
     if (qemu_egl_angle_d3d) {
         flags |= VIRGL_RENDERER_D3D11_SHARE_TEXTURE;
     }
 #endif
+#endif
 #if VIRGL_VERSION_MAJOR >= 1
     if (virtio_gpu_venus_enabled(g->parent_obj.conf)) {
         flags |= VIRGL_RENDERER_VENUS | VIRGL_RENDERER_RENDER_SERVER;
     }
+    /* darwin experiment: venus-only; vrend has no EGL/GLX winsys here and
+     * vrend_renderer_init would abort virgl initialization */
+    flags |= VIRGL_RENDERER_NO_VIRGL;
     if (virtio_gpu_drm_enabled(g->parent_obj.conf)) {
         flags |= VIRGL_RENDERER_DRM;
 

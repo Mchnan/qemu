@@ -78,7 +78,8 @@ if config_all_devices.has_key('CONFIG_VIRTIO_GPU')
 
   if virgl.found() and opengl.found()
     virtio_gpu_gl_ss = ss.source_set()
-    virtio_gpu_gl_ss.add(when: ['CONFIG_VIRTIO_GPU', virgl, opengl],
+    # darwin experiment: build virtio-gpu-gl without epoxy/opengl (venus-only)
+    virtio_gpu_gl_ss.add(when: ['CONFIG_VIRTIO_GPU', virgl],
                          if_true: [files('virtio-gpu-gl.c', 'virtio-gpu-virgl.c'), pixman, virgl])
     hw_display_modules += {'virtio-gpu-gl': virtio_gpu_gl_ss}
   endif
@@ -101,7 +102,7 @@ if config_all_devices.has_key('CONFIG_VIRTIO_PCI')
 
   if virgl.found() and opengl.found()
     virtio_gpu_pci_gl_ss = ss.source_set()
-    virtio_gpu_pci_gl_ss.add(when: ['CONFIG_VIRTIO_GPU', 'CONFIG_VIRTIO_PCI', virgl, opengl],
+    virtio_gpu_pci_gl_ss.add(when: ['CONFIG_VIRTIO_GPU', 'CONFIG_VIRTIO_PCI', virgl],
                              if_true: [files('virtio-gpu-pci-gl.c'), pixman])
     hw_display_modules += {'virtio-gpu-pci-gl': virtio_gpu_pci_gl_ss}
   endif

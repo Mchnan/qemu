@@ -125,13 +125,9 @@ static void virtio_gpu_gl_device_realize(DeviceState *qdev, Error **errp)
     }
 
     if (!display_opengl) {
-        error_setg(errp,
-                   "The display backend does not have OpenGL support enabled");
-        error_append_hint(errp,
-                          "It can be enabled with '-display BACKEND,gl=on' "
-                          "where BACKEND is the name of the display backend "
-                          "to use.\n");
-        return;
+        /* darwin experiment: venus-only headless use needs no GL scanout */
+        warn_report("display backend has no OpenGL support; "
+                    "GL scanout disabled (venus-only)");
     }
 
     g->parent_obj.conf.flags |= (1 << VIRTIO_GPU_FLAG_VIRGL_ENABLED);
