@@ -27,6 +27,24 @@
 #include <virglrenderer.h>
 
 /*
+ * libvirglrenderer >= 1.3 renamed the version macros
+ * (VIRGL_MAJOR_VERSION et al. in virgl-version.h); the old
+ * VIRGL_VERSION_* spellings disappeared, and an undefined identifier
+ * evaluates to 0 in #if, silently compiling out every
+ * VIRGL_VERSION_MAJOR >= 1 block (blob resources, MAP_BLOB,
+ * SET_SCANOUT_BLOB, fence info). Bridge the names.
+ */
+#ifndef VIRGL_VERSION_MAJOR
+#ifdef VIRGL_MAJOR_VERSION
+#define VIRGL_VERSION_MAJOR VIRGL_MAJOR_VERSION
+#define VIRGL_VERSION_MINOR VIRGL_MINOR_VERSION
+#define VIRGL_VERSION_MICRO VIRGL_MICRO_VERSION
+#else
+#error "virglrenderer version macros not found"
+#endif
+#endif
+
+/*
  * VIRGL_CHECK_VERSION available since libvirglrenderer 1.0.1 and was fixed
  * in 1.1.0. Undefine bugged version of the macro and provide our own.
  */
@@ -163,9 +181,6 @@ virtio_gpu_virgl_map_resource_blob(VirtIOGPU *g,
     g_autofree char *name = NULL;
     struct virtio_gpu_virgl_hostmem_region *vmr;
     VirtIOGPUBase *b = VIRTIO_GPU_BASE(g);
-#if VIRGL_HAS_MAP_FIXED
-    VirtIOGPUGL *gl = VIRTIO_GPU_GL(g);
-#endif
     MemoryRegion *mr;
     uint64_t size;
     void *data;
@@ -176,39 +191,17 @@ virtio_gpu_virgl_map_resource_blob(VirtIOGPU *g,
         return -EOPNOTSUPP;
     }
 
-#if VIRGL_HAS_MAP_FIXED
+#if VIRGL_HAS_MAP_FIXED && 0
     /*
-     * virgl_renderer_resource_map_fixed() allows to create multiple
-     * mappings of the same resource, while virgl_renderer_resource_map()
-     * not. Don't allow mapping same resource twice.
+     * darwin/hvf: the MAP_FIXED fast path swaps pages *underneath* the
+     * hostmem RAM block with mmap(MAP_FIXED). The hvf memory listener
+     * never learns about it, so the EPT keeps pointing at the old
+     * anonymous pages and the guest reads/writes orphaned memory while
+     * the renderer sees an empty blob. (KVM on Linux is saved by
+     * mmu_notifiers; hvf has no equivalent.) Always take the MR-subregion
+     * fallback below: it is the listener-visible path, so every
+     * mapping/unmapping updates the guest stage-2.
      */
-    if (res->map_fixed || res->mr) {
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: failed to map(fixed) virgl resource: already mapped\n",
-                      __func__);
-        return -EBUSY;
-    }
-
-    ret = virgl_renderer_resource_map_fixed(res->base.resource_id,
-                                            gl->hostmem_mmap + offset);
-    switch (ret) {
-    case 0:
-        res->map_fixed = gl->hostmem_mmap + offset;
-        return 0;
-
-    case -EOPNOTSUPP:
-        /*
-         * MAP_FIXED is unsupported by this resource.
-         * Mapping falls back to a blob subregion method in that case.
-         */
-        break;
-
-    default:
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: failed to map(fixed) virgl resource: %s\n",
-                      __func__, strerror(-ret));
-        return ret;
-    }
 #endif
 
     ret = virgl_renderer_resource_map(res->base.resource_id, &data, &size);
@@ -245,6 +238,18 @@ virtio_gpu_virgl_unmap_resource_blob(VirtIOGPU *g,
     VirtIOGPUBase *b = VIRTIO_GPU_BASE(g);
     MemoryRegion *mr = res->mr;
     int ret;
+    int i;
+
+    /*
+     * A pixman scanout surface references the blob memory in place (see
+     * virgl_cmd_set_scanout_blob's non-dmabuf fallback); stop scanning the
+     * resource out before its host mapping goes away.
+     */
+    for (i = 0; i < g->parent_obj.conf.max_outputs; i++) {
+        if (res->base.scanout_bitmask & (1 << i)) {
+            virtio_gpu_disable_scanout(g, i);
+        }
+    }
 
 #if VIRGL_HAS_MAP_FIXED
     if (res->map_fixed) {
@@ -1012,6 +1017,31 @@ static void virgl_cmd_set_scanout_blob(VirtIOGPU *g,
         cmd->error = VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID;
         return;
     }
+    if (!console_has_gl(g->parent_obj.scanout[ss.scanout_id].con)) {
+        /*
+         * Non-GL console: scan the mapped blob memory out directly through
+         * the shared pixman path. This is the only working path on hosts
+         * without dmabuf support (macOS: no udmabuf), where info.fd for a
+         * venus blob is a plain shm fd and the dmabuf scanout below would
+         * silently no-op. The DisplaySurface references the blob memory in
+         * place (zero copy), which is how venus guest output reaches the
+         * console on such hosts.
+         */
+        void *map = res->map_fixed ? res->map_fixed
+                    : (res->mr ? memory_region_get_ram_ptr(res->mr) : NULL);
+        if (map && virtio_gpu_scanout_blob_to_fb(&fb, &ss, res->base.blob_size)) {
+            res->base.blob = map;
+            g->parent_obj.enable = 1;
+            virtio_gpu_do_set_scanout(g, ss.scanout_id, &fb, &res->base,
+                                      &ss.r, &cmd->error);
+            return;
+        }
+        qemu_log_mask(LOG_GUEST_ERROR, "%s: no mapped memory for blob scanout %d\n",
+                      __func__, ss.resource_id);
+        cmd->error = VIRTIO_GPU_RESP_ERR_UNSPEC;
+        return;
+    }
+
     if (res->base.dmabuf_fd < 0) {
         qemu_log_mask(LOG_GUEST_ERROR, "%s: resource not backed by dmabuf %d\n",
                       __func__, ss.resource_id);
@@ -1107,6 +1137,8 @@ void virtio_gpu_virgl_process_cmd(VirtIOGPU *g,
         break;
 #if VIRGL_VERSION_MAJOR >= 1
     case VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB:
+        virgl_cmd_resource_create_blob(g, cmd);
+        break;
         virgl_cmd_resource_create_blob(g, cmd);
         break;
     case VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB:
