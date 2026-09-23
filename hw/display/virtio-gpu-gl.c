@@ -26,6 +26,21 @@
 
 #include <virglrenderer.h>
 
+/*
+ * libvirglrenderer >= 1.3 renamed the version macros; bridge the old
+ * VIRGL_VERSION_* spellings QEMU still uses (undefined identifiers
+ * evaluate to 0 in #if and silently compile out the 3D blocks).
+ */
+#ifndef VIRGL_VERSION_MAJOR
+#ifdef VIRGL_MAJOR_VERSION
+#define VIRGL_VERSION_MAJOR VIRGL_MAJOR_VERSION
+#define VIRGL_VERSION_MINOR VIRGL_MINOR_VERSION
+#define VIRGL_VERSION_MICRO VIRGL_MICRO_VERSION
+#else
+#error "virglrenderer version macros not found"
+#endif
+#endif
+
 static void virtio_gpu_gl_update_cursor_data(VirtIOGPU *g,
                                              struct virtio_gpu_scanout *s,
                                              uint32_t resource_id)

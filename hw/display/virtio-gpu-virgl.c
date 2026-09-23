@@ -878,7 +878,13 @@ static void virgl_cmd_resource_create_blob(VirtIOGPU *g,
     virgl_args.iovecs = res->base.iov;
     virgl_args.num_iovs = res->base.iov_cnt;
 
+    fprintf(stderr, "TEMP virgl_cmd_resource_create_blob res=%d size=%" PRIu64
+            " blob_mem=%d blob_id=%" PRIu64 " ctx=%d\n",
+            cblob.resource_id, (uint64_t)cblob.size, cblob.blob_mem,
+            (uint64_t)cblob.blob_id, cblob.hdr.ctx_id);
     ret = virgl_renderer_resource_create_blob(&virgl_args);
+    fprintf(stderr, "TEMP virgl_cmd_resource_create_blob res=%d ret=%d\n",
+            cblob.resource_id, ret);
     if (ret) {
         qemu_log_mask(LOG_GUEST_ERROR, "%s: virgl blob create error: %s\n",
                       __func__, strerror(-ret));
@@ -981,6 +987,8 @@ static void virgl_cmd_set_scanout_blob(VirtIOGPU *g,
 
     VIRTIO_GPU_FILL_CMD(ss);
     virtio_gpu_scanout_blob_bswap(&ss);
+    fprintf(stderr, "TEMP set_scanout_blob scanout=%d res=%d %dx%d\n",
+            ss.scanout_id, ss.resource_id, ss.r.width, ss.r.height);
     trace_virtio_gpu_cmd_set_scanout_blob(ss.scanout_id, ss.resource_id,
                                           ss.r.width, ss.r.height, ss.r.x,
                                           ss.r.y);
